@@ -27,7 +27,10 @@ type Server struct {
 }
 
 type Service struct {
-
+    name string
+    svcValue reflect.Value
+    svcType reflect.Type
+    methods map[string]reflect.Method
 }
 
 type Client struct {
