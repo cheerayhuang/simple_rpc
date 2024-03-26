@@ -8,14 +8,14 @@ import "github.com/pkg/errors"
 
 
 type Network struct {
-    mu sync.Mutex
+    mu sync.RWMutex
 
     servers map[any]*Server
     clients map[any]*Client
     conns map[*Client]*Server
 
     reqCh chan ReqMsg
-    done  chan struct{}
+    stop chan struct{}
 }
 
 func MakeNetwork() (*Network, error) {
@@ -26,20 +26,49 @@ func MakeNetwork() (*Network, error) {
     n.conns = make(map[*Client]*Server)
 
     n.reqCh = make(chan ReqMsg)
-    n.done = make(chan struct{})
+    n.stop = make(chan struct{})
+
+    go func() {
+        for {
+            select {
+            case req := <-n.reqCh:
+                go n.ProcessReq(req)
+
+            case <-n.stop:
+                return
+            }
+        }
+
+    }()
 
     return n, nil
+}
+
+func (n *Network) ProcessReq(req *ReqMsg) {
+    client := n.QueryClientByID(req.clientID)
+    if client == nil {
+        log.Errorf("Network receive an invalid Req sent by (%v), the client doesn't exist.", req.clientID)
+        return
+    }
+
+    ser := n.QueryPeerServerByClient(client)
+    if ser == nil {
+        log.Errorf("the clinet(%v) can't connect to any servers.", client.id)
+        return
+    }
+
+    //TODO: handle the req by Server, and then send the reply into replyCH.
 }
 
 func (n *Network) Connect(cliID any, serID any) error {
     cli := n.QueryClientByID(cliID)
     ser := n.QueryServerByID(serID)
 
-    if !cli {
+    if cli != nil {
         return errors.Errorf("cliID[%v] doesn't exist.", cliID)
     }
 
-    if !ser {
+    if ser != nil{
         return errors.Errorf("serID[%v] doen't exist.", serID)
     }
 
@@ -75,7 +104,17 @@ func (n *Network) QueryServerByID(id any) *Server {
     return nil
 }
 
-func (n *Network) QueryPeerServerByClient
+func (n *Network) QueryPeerServerByClient(cli *Client) *Server {
+    n.mu.RLock()
+    defer n.mu.RUnlock()
+
+    ser, ok := n.conns[cli]
+    if ok {
+        return ser
+    }
+
+    return nil
+}
 
 func (n *Network) AddServer(ser *Server) error {
     n.mu.Lock()
@@ -107,6 +146,8 @@ func (n *Network) AddClient(cli *Client) error {
         return errors.New("Add Client failed: new Client ID is duplicated.")
     }
 
+    cli.reqCh = n.reqCh
+    cli.stop = n.stop
     n.clients[cli.id] = cli
 
     return nil
@@ -148,14 +189,14 @@ type Client struct {
     id any
 
     reqCh chan ReqMsg
-    done chan struct {}
+    stop chan struct {}
 }
 
 func MakeClient(id any) (*Client, any) {
     c := Client{
         id: id,
-        reqCh: make(chan ReqMsg),
-        done: make(chan struct{}),
+        reqCh: nil,
+        stop: nil,
     }
 
     return &c, nil
