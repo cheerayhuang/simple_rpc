@@ -1,8 +1,8 @@
 package main
 
-import "log"
 import "reflect"
 import "sync"
+import "time"
 
 import "github.com/pkg/errors"
 
@@ -32,7 +32,7 @@ func MakeNetwork() (*Network, error) {
         for {
             select {
             case req := <-n.reqCh:
-                go n.ProcessReq(req)
+                go n.ProcessReq(&req)
 
             case <-n.stop:
                 return
@@ -47,17 +47,46 @@ func MakeNetwork() (*Network, error) {
 func (n *Network) ProcessReq(req *ReqMsg) {
     client := n.QueryClientByID(req.clientID)
     if client == nil {
-        log.Errorf("Network receive an invalid Req sent by (%v), the client doesn't exist.", req.clientID)
+        logger.Error().Msgf("Network receive an invalid Req sent by (%v), the client doesn't exist.", req.clientID)
         return
     }
 
     ser := n.QueryPeerServerByClient(client)
     if ser == nil {
-        log.Errorf("the clinet(%v) can't connect to any servers.", client.id)
+        logger.Error().Msgf("the clinet(%v) can't connect to any servers.", client.id)
         return
     }
 
-    //TODO: handle the req by Server, and then send the reply into replyCH.
+    mediateRepCh := make(chan *ReplyMsg)
+    go func() {
+        r := ser.ProcessReq(req)
+        mediateRepCh <- r
+    }()
+
+    serviceInvalid := false
+    var reply *ReplyMsg = nil
+
+    for reply == nil && !serviceInvalid {
+        select {
+        case reply = <-mediateRepCh:
+            continue
+
+        case <- time.After(100 * time.Millisecond):
+            serviceInvalid = n.IsServiceInvalid(client, ser)
+            if serviceInvalid {
+                go func() {
+                    <-mediateRepCh
+                }()
+            }
+        }
+    }
+
+    if serviceInvalid {
+        logger.Error().Msg("client of server is invalid.")
+        req.replyChan <- nil
+    }
+
+    req.replyChan <- reply
 }
 
 func (n *Network) Connect(cliID any, serID any) error {
@@ -162,6 +191,19 @@ func (n *Network) DelClient(cliID any) error {
     return nil
 }
 
+func (n *Network) IsServiceInvalid(client *Client, server *Server) bool {
+    n.mu.RLock()
+    n.mu.RUnlock()
+
+    if n.clients[client.id] != client ||
+        n.servers[server.id] != server ||
+        n.conns[client] != server {
+            return true
+        }
+
+    return false
+}
+
 type Server struct {
     mu sync.Mutex
 
@@ -176,6 +218,11 @@ func MakeServer(id any) (*Server, error) {
     }
 
     return &s, nil
+}
+
+func (s *Server) ProcessReq(req *ReqMsg) *ReplyMsg {
+
+    return nil
 }
 
 type Service struct {
@@ -203,13 +250,13 @@ func MakeClient(id any) (*Client, any) {
 }
 
 type ReqMsg struct {
-    clinetID any
+    clientID any
 
     serviceMethod string
     argsType reflect.Type
     args []byte
 
-    replyChan chan ReplyMsg
+    replyChan chan *ReplyMsg
 }
 
 type ReplyMsg struct {
@@ -218,5 +265,5 @@ type ReplyMsg struct {
 }
 
 func main() {
-    log.Println("hello world!")
+    logger.Info().Msg("hello world!")
 }
