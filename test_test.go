@@ -26,7 +26,7 @@ func TestBasic(t *testing.T) {
     {
         reply := ""
         echoMsg := "hi, this is a msg."
-        client.Call("service.echo", "hi, this is a msg.", &reply)
+        client.Call("service.echo", echoMsg, &reply)
         if reply != echoMsg {
             t.Errorf("rpc service.echo failed.")
         }
