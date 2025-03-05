@@ -21,10 +21,10 @@ func ConsoleLogConfig(w *zerolog.ConsoleWriter) {
     w.TimeFormat = time.DateTime + ".000-07"
     w.FormatLevel = func(i interface{}) string { return strings.ToUpper(fmt.Sprintf("[%-5s]", i)) }
     w.FormatTimestamp = func(i interface{}) string {return time.Now().Format(w.TimeFormat)}
-
 }
 
 func init() {
     out := zerolog.NewConsoleWriter(ConsoleLogConfig)
-    logger = zerolog.New(out)
+	// caller 打印日志所在的文件名和行数。
+    logger = zerolog.New(out).With().Caller().Logger()
 }
